@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"log"
 	"math/rand"
 	"sync"
 	"time"
@@ -45,9 +46,9 @@ func NewDispatcher(numWorkers int) *Dispatcher {
 	for i := 0; i < numWorkers; i++ {
 		d.Workers[i] = &Worker{
 			ID:    i,
-			Tasks: make(chan Task, 100),
+			Tasks: make(chan Task, 1000),
 		}
-		go d.Workers[i].Start()
+		go d.Workers[i].Start(&wg)
 	}
 
 	go d.startCleanupRoutine()
@@ -55,16 +56,17 @@ func NewDispatcher(numWorkers int) *Dispatcher {
 	return d
 }
 
-func (w *Worker) Start() {
+var wg sync.WaitGroup
+
+func (w *Worker) Start(wg *sync.WaitGroup) {
 	for task := range w.Tasks {
-		// Simulate processing time
-		time.Sleep(time.Duration(rand.Intn(1000)) * time.Millisecond)
 		fmt.Printf("Worker %d processed task %d with SKU %s\n", w.ID, task.ID, task.SKU)
 
-		// this part for able to see how many tasks that the worker processed, it is only for POC
-		w.mu.Lock()
-		w.ProcessedTasks++
-		w.mu.Unlock()
+		// Simulate task processing
+		// time.Sleep(time.Duration(100) * time.Millisecond)
+
+		// Mark task as done
+		wg.Done()
 	}
 }
 
@@ -113,22 +115,63 @@ func (d *Dispatcher) cleanupSKUAssignment() {
 	}
 }
 
+var skuFrequencies = []struct {
+	skuPrefix string
+	weight    int // Higher weight means more frequent
+}{
+	{"SKU-42", 50}, // Most common SKU
+	{"SKU-5", 30},  // Second most common SKU
+	{"SKU-20", 20}, // Less common SKU
+	{"SKU-7", 10},  // Even less common SKU
+	{"random", 40}, // Random SKUs
+}
+
+// Function to generate SKU based on weighted probabilities
+func generateSKU() string {
+	// Calculate total weight
+	totalWeight := 0
+	for _, group := range skuFrequencies {
+		totalWeight += group.weight
+	}
+
+	// Random number between 0 and totalWeight
+	randVal := rand.Intn(totalWeight)
+
+	// Pick the SKU group based on weight
+	for _, group := range skuFrequencies {
+		if randVal < group.weight {
+			if group.skuPrefix == "random" {
+				// Generate a fully random SKU
+				return fmt.Sprintf("SKU-%d", rand.Intn(100))
+			}
+			return group.skuPrefix
+		}
+		randVal -= group.weight
+	}
+
+	return "SKU-default" // Fallback, though it shouldn't happen
+}
+
 func main() {
-	numWorkers := 5
+	rand.Seed(42)
+
+	start := time.Now()
+
+	numWorkers := 10
 	dispatcher := NewDispatcher(numWorkers)
 
 	// Simulate incoming tasks
-	for i := 0; i < 10000; i++ {
+	for i := 0; i < 1000000; i++ {
 		task := Task{
 			ID:  i,
-			SKU: fmt.Sprintf("SKU-%d", rand.Intn(100)),
+			SKU: generateSKU(),
 		}
+		wg.Add(1)
 		dispatcher.Dispatch(task)
-		time.Sleep(time.Duration(rand.Intn(100)) * time.Millisecond) // Simulate varying incoming task rate
 	}
 
 	// Wait for all tasks to be processed
-	time.Sleep(10 * time.Second)
+	wg.Wait() // Wait for all tasks to be processed
 
 	// Print the number of tasks processed by each worker
 	for _, worker := range dispatcher.Workers {
@@ -137,4 +180,7 @@ func main() {
 
 	// Print the current size of the SKUAssignment map
 	fmt.Printf("Current SKUAssignment map size: %d\n", len(dispatcher.SKUAssignment))
+
+	elapsed := time.Since(start)
+	log.Printf("Function took %s", elapsed)
 }
